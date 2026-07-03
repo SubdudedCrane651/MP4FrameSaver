@@ -2,18 +2,18 @@ import sys
 from moviepy import VideoFileClip
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QPushButton, QFileDialog,
-    QVBoxLayout, QScrollArea, QGridLayout, QMessageBox
+    QVBoxLayout, QScrollArea, QGridLayout, QMessageBox,
+    QGraphicsDropShadowEffect
 )
 from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import Qt
-import numpy as np
 import cv2
 
 
 class FramePicker(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MP4 Frame Picker – All Frames Visible")
+        self.setWindowTitle("MP4 Frame Picker – High Quality Thumbnails")
 
         self.clip = None
         self.frames = []
@@ -73,35 +73,78 @@ class FramePicker(QWidget):
                 widget.deleteLater()
 
     def add_thumbnail(self, frame, index):
-        # Convert frame to QImage
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # MoviePy gives RGB → convert to BGR first
+        frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+        # Resize frame for thumbnail using high-quality downsampling
+        thumb = cv2.resize(
+            frame_bgr,
+            (320, 180),
+            interpolation=cv2.INTER_AREA
+        )
+
+        # Add frame number overlay
+        cv2.putText(
+            thumb,
+            f"{index}",
+            (10, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA
+        )
+
+        # Convert to RGB for Qt
+        rgb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
-        pix = QPixmap.fromImage(qimg).scaled(160, 90, Qt.AspectRatioMode.KeepAspectRatio)
+        pix = QPixmap.fromImage(qimg)
 
+        # Create label
         label = QLabel()
         label.setPixmap(pix)
-        label.setStyleSheet("border:1px solid #444;")
+        label.setStyleSheet("""
+            border: 2px solid #555;
+            border-radius: 8px;
+            margin: 6px;
+        """)
+
+        # Drop shadow
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(18)
+        shadow.setOffset(3, 3)
+        label.setGraphicsEffect(shadow)
+
+        # Click handler
         label.mousePressEvent = lambda e, idx=index: self.select_frame(idx)
 
-        row = index // 5
-        col = index % 5
+        # Add to grid
+        row = index // 4
+        col = index % 4
         self.grid.addWidget(label, row, col)
 
-    def select_frame(self, index):
-        self.selected_frame = self.frames[index]
 
-        rgb = cv2.cvtColor(self.selected_frame, cv2.COLOR_BGR2RGB)
+    def select_frame(self, index):
+        # MoviePy gives RGB → convert to BGR for consistency
+        frame_bgr = cv2.cvtColor(self.frames[index], cv2.COLOR_RGB2BGR)
+        self.selected_frame = frame_bgr
+
+        # Convert BGR → RGB for Qt preview
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
+
         pix = QPixmap.fromImage(qimg).scaled(
             self.preview_label.width(),
             self.preview_label.height(),
             Qt.AspectRatioMode.KeepAspectRatio
         )
+
         self.preview_label.setPixmap(pix)
+
 
     def save_frame(self):
         if self.selected_frame is None:
