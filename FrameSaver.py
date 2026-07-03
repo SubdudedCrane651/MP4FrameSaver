@@ -9,6 +9,30 @@ from PyQt6.QtGui import QPixmap, QImage
 from PyQt6.QtCore import Qt
 import cv2
 
+import numpy as np
+import cv2
+
+def apply_color_correction(img_bgr, gamma=1.1, vibrance=1.15, warmth=1.10):
+        # --- 1. Gamma correction ---
+        # gamma > 1 brightens midtones
+        inv_gamma = 1.0 / gamma
+        table = np.array([(i / 255.0) ** inv_gamma * 255 for i in range(256)]).astype("uint8")
+        img = cv2.LUT(img_bgr, table)
+
+        # --- 2. Vibrance (smart saturation) ---
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV).astype(np.float32)
+        hsv[..., 1] *= vibrance
+        hsv[..., 1] = np.clip(hsv[..., 1], 0, 255)
+        img = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+        # --- 3. Warmth (boost red/yellow, reduce blue) ---
+        b, g, r = cv2.split(img)
+        r = np.clip(r * warmth, 0, 255)
+        b = np.clip(b / warmth, 0, 255)
+        img = cv2.merge([b.astype(np.uint8), g.astype(np.uint8), r.astype(np.uint8)])
+
+        return img
+            
 
 class FramePicker(QWidget):
     def __init__(self):
@@ -127,12 +151,17 @@ class FramePicker(QWidget):
 
 
     def select_frame(self, index):
-        # MoviePy gives RGB → convert to BGR for consistency
+        # MoviePy gives RGB → convert to BGR
         frame_bgr = cv2.cvtColor(self.frames[index], cv2.COLOR_RGB2BGR)
-        self.selected_frame = frame_bgr
 
-        # Convert BGR → RGB for Qt preview
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        # Apply color correction
+        corrected = apply_color_correction(frame_bgr)
+
+        # Store corrected frame for saving
+        self.selected_frame = corrected
+
+        # Convert to RGB for Qt preview
+        rgb = cv2.cvtColor(corrected, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
         qimg = QImage(rgb.data, w, h, bytes_per_line, QImage.Format.Format_RGB888)
@@ -145,7 +174,6 @@ class FramePicker(QWidget):
 
         self.preview_label.setPixmap(pix)
 
-
     def save_frame(self):
         if self.selected_frame is None:
             QMessageBox.warning(self, "No frame selected", "Click a frame first.")
@@ -154,7 +182,6 @@ class FramePicker(QWidget):
         path, _ = QFileDialog.getSaveFileName(self, "Save Frame", "", "PNG (*.png);;JPG (*.jpg)")
         if path:
             cv2.imwrite(path, self.selected_frame)
-
 
 app = QApplication(sys.argv)
 window = FramePicker()
