@@ -32,8 +32,70 @@ def apply_color_correction(img_bgr, gamma=1.1, vibrance=1.15, warmth=1.10):
         img = cv2.merge([b.astype(np.uint8), g.astype(np.uint8), r.astype(np.uint8)])
 
         return img
-            
+    
+def auto_white_balance(img):
+    result = img.copy().astype(np.float32)
 
+    avg_b = np.mean(result[..., 0])
+    avg_g = np.mean(result[..., 1])
+    avg_r = np.mean(result[..., 2])
+
+    avg_gray = (avg_b + avg_g + avg_r) / 3
+
+    result[..., 0] *= (avg_gray / avg_b)
+    result[..., 1] *= (avg_gray / avg_g)
+    result[..., 2] *= (avg_gray / avg_r)
+
+    return np.clip(result, 0, 255).astype(np.uint8)
+
+def sharpen(img):
+    blur = cv2.GaussianBlur(img, (0, 0), 2)
+    sharp = cv2.addWeighted(img, 1.5, blur, -0.5, 0)
+    return sharp
+
+def kodak_film_look(img):
+    # Convert to float
+    img = img.astype(np.float32) / 255.0
+
+    # --- Teal shadows / warm highlights ---
+    r, g, b = img[..., 2], img[..., 1], img[..., 0]
+
+    # Warm highlights (boost red/yellow)
+    r = r * 1.08
+    g = g * 1.02
+
+    # Teal shadows (reduce red, boost blue)
+    b = b * 1.10
+    r = r * 0.95
+
+    # --- Film contrast S-curve ---
+    img = np.stack([b, g, r], axis=-1)
+    img = np.clip(img, 0, 1)
+
+    # S-curve
+    img = img ** 0.9  # gentle contrast
+
+    return (img * 255).astype(np.uint8)
+
+def denoise(img):
+    return cv2.fastNlMeansDenoisingColored(img, None, 5, 5, 7, 21)
+ 
+def apply_full_color_pipeline(img_bgr):
+    # Step 1: Auto white balance
+    img = auto_white_balance(img_bgr)
+
+    # Step 2: Noise reduction
+    img = denoise(img)
+
+    # Step 3: Kodak film look
+    img = kodak_film_look(img)
+
+    # Step 4: Sharpening
+    img = sharpen(img)
+
+    return img
+
+ 
 class FramePicker(QWidget):
     def __init__(self):
         super().__init__()
@@ -154,13 +216,16 @@ class FramePicker(QWidget):
         # MoviePy gives RGB → convert to BGR
         frame_bgr = cv2.cvtColor(self.frames[index], cv2.COLOR_RGB2BGR)
 
-        # Apply color correction
-        corrected = apply_color_correction(frame_bgr)
+        # Store ORIGINAL frame for saving
+        self.selected_frame_original = frame_bgr
 
-        # Store corrected frame for saving
-        self.selected_frame = corrected
+        # Create enhanced preview (Kodak look, sharpening, etc.)
+        corrected = apply_full_color_pipeline(frame_bgr)
 
-        # Convert to RGB for Qt preview
+        # Store corrected frame for preview only
+        self.selected_frame_corrected = corrected
+
+        # Convert corrected frame to RGB for Qt preview
         rgb = cv2.cvtColor(corrected, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
         bytes_per_line = ch * w
@@ -174,14 +239,18 @@ class FramePicker(QWidget):
 
         self.preview_label.setPixmap(pix)
 
+
+
     def save_frame(self):
-        if self.selected_frame is None:
+        if self.selected_frame_original is None:
             QMessageBox.warning(self, "No frame selected", "Click a frame first.")
             return
 
         path, _ = QFileDialog.getSaveFileName(self, "Save Frame", "", "PNG (*.png);;JPG (*.jpg)")
         if path:
-            cv2.imwrite(path, self.selected_frame)
+            # Save the ORIGINAL frame (no color correction)
+            cv2.imwrite(path, self.selected_frame_original)
+
 
 app = QApplication(sys.argv)
 window = FramePicker()
